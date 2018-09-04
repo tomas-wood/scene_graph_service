@@ -1,0 +1,9 @@
+[submodule "scene-graph-TF-release"]
+	path = scene-graph-TF-release
+	url = https://github.com/huawei-tomas/scene-graph-TF-release
+[submodule "Detectron"]
+	path = Detectron
+	url = https://github.com/facebookresearch/Detectron
+[submodule "pytorch"]
+	path = pytorch
+	url = https://github.com/pytorch/pytorch
