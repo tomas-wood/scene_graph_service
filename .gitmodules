@@ -7,3 +7,9 @@
 [submodule "pytorch"]
 	path = pytorch
 	url = https://github.com/pytorch/pytorch
+[submodule "eigen-git-mirror"]
+	path = eigen-git-mirror
+	url = https://github.com/eigenteam/eigen-git-mirror
+[submodule "opencv"]
+	path = opencv
+	url = https://github.com/opencv/opencv
