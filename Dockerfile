@@ -1,190 +1,51 @@
-FROM nvidia/cuda:9.2-cudnn7-devel-ubuntu16.04
+FROM tensorflow/tensorflow:latest-gpu
 
 MAINTAINER Thomas Wood <thomas@synpon.com>
 
-ARG TENSORFLOW_VERSION=0.12.1
-ARG TENSORFLOW_ARCH=gpu
+COPY ./scene-graph-TF-release /app/scene-graph-TF-release
 
-#RUN echo -e "\n**********************\nNVIDIA Driver Version\n**********************\n" && \
-#	cat /proc/driver/nvidia/version && \
-#	echo -e "\n**********************\nCUDA Version\n**********************\n" && \
-#	nvcc -V && \
-#	echo -e "\n\nBuilding your Deep Learning Docker Image...\n"
+COPY ./sg_checkpoint.zip /app/scene-graph-TF-release/sg_checkpoint.zip
 
-# Install some dependencies
-RUN apt-get update && apt-get install -y \
-		bc \
-		build-essential \
-		cmake \
-		curl \
-		g++ \
-		gfortran \
-		git \
-		libffi-dev \
-		libfreetype6-dev \
-		libhdf5-dev \
-		libjpeg-dev \
-		liblcms2-dev \
-		libopenblas-dev \
-		liblapack-dev \
-		libopenjpeg2 \
-		libpng12-dev \
-		libssl-dev \
-		libtiff5-dev \
-		libwebp-dev \
-		libzmq3-dev \
-		nano \
-		pkg-config \
-		python-dev \
-		software-properties-common \
-		unzip \
-		vim \
-		wget \
-		zlib1g-dev \
-		qt5-default \
-		libvtk6-dev \
-		zlib1g-dev \
-		libjpeg-dev \
-		libwebp-dev \
-		libpng-dev \
-		libtiff5-dev \
-		libjasper-dev \
-		libopenexr-dev \
-		libgdal-dev \
-		libdc1394-22-dev \
-		libavcodec-dev \
-		libavformat-dev \
-		libswscale-dev \
-		libtheora-dev \
-		libvorbis-dev \
-		libxvidcore-dev \
-		libx264-dev \
-		yasm \
-		libopencore-amrnb-dev \
-		libopencore-amrwb-dev \
-		libv4l-dev \
-		libxine2-dev \
-		libtbb-dev \
-		libeigen3-dev \
-		python-dev \
-		python-tk \
-		python-numpy \
-		python3-dev \
-		python3-tk \
-		python3-numpy \
-		ant \
-		default-jdk \
-		doxygen \
-		&& \
-	apt-get clean && \
-	apt-get autoremove && \
-	rm -rf /var/lib/apt/lists/* && \
-# Link BLAS library to use OpenBLAS using the alternatives mechanism (https://www.scipy.org/scipylib/building/linux.html#debian-ubuntu)
-	update-alternatives --set libblas.so.3 /usr/lib/openblas-base/libblas.so.3
+RUN mkdir /app/scene-graph-TF-release/data
 
-# Install pip
-RUN curl -O https://bootstrap.pypa.io/get-pip.py && \
-	python get-pip.py && \
-	rm get-pip.py
+COPY ./vg_data.zip /app/scene-graph-TF-release/data/vg_data.zip
 
-# Add SNI support to Python
-RUN pip --no-cache-dir install \
-		pyopenssl \
-		ndg-httpsclient \
-		pyasn1
+RUN cd /app/scene-graph-TF-release && \
+    unzip sg_checkpoint.zip && \
+    rm sg_checkpoint.zip && \
+    cp checkpoints/dual_graph_vrd_final_iter2.ckpt.index checkpoints/dual_graph_vrd_final_iter2.ckpt && \
+    cd data && \
+    unzip vg_data.zip && \
+    rm vg_data.zip && \
+    cd /
 
-# Install useful Python packages using apt-get to avoid version incompatibilities with Tensorflow binary
-# especially numpy, scipy, skimage and sklearn (see https://github.com/tensorflow/tensorflow/issues/2034)
-RUN apt-get update && apt-get install -y \
-		python-numpy \
-		python-scipy \
-		python-nose \
-		python-h5py \
-		python-skimage \
-		python-matplotlib \
-		python-pandas \
-		python-sklearn \
-		python-sympy \
-		&& \
-	apt-get clean && \
-	apt-get autoremove && \
-	rm -rf /var/lib/apt/lists/*
+COPY ./pytorch /app/pytorch
 
-# Install other useful Python packages using pip
-RUN pip --no-cache-dir install --upgrade ipython && \
-	pip --no-cache-dir install \
-		Cython \
-		ipykernel \
-		jupyter \
-		path.py \
-		Pillow \
-		pygments \
-		six \
-		sphinx \
-		wheel \
-		zmq \
-		&& \
-	python -m ipykernel.kernelspec
+RUN pip install Cython easydict graphviz pyyaml
 
+RUN cd /app/scene-graph-TF-release/lib && \
+    make && \
+    cp roi_pooling_layer/src/* /usr/local/lib/python2.7/dist-packages/tensorflow/user_ops && \
+    cd /usr/local/lib/python2.7/dist-packages/tensorflow/user_ops && \
+    TF_INC=/usr/local/lib/python2.7/dist-packages/tensorflow/include && \
+    TF_LIB=/usr/local/lib/python2.7/dist-packages/tensorflow && \
+    nvcc -std=c++11 -c -o roi_pooling_op_gpu.cu.o roi_pooling_op_gpu.cu.cc \
+      -I $TF_INC -I /usr/local -L$TF_LIB -ltensorflow_framework \
+      -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC --expt-relaxed-constexpr -D_GLIBCXX_USE_CXX11_ABI=0  && \
+    g++ -std=c++11 -shared -o roi_pooling_op_gpu.so roi_pooling_op.cc roi_pooling_op_gpu.cu.o \
+      -I $TF_INC -fPIC -L /usr/local/cuda-9.2/lib64/ -L /usr/local/cuda-9.0/targets/x86_64-linux/lib \
+      -lcudart -L$TF_LIB -ltensorflow_framework -D_GLIBCXX_USE_CXX11_ABI=0 && \
+    cp roi_pooling_op_gpu.so /app/scene-graph-TF-release/lib/roi_pooling_layer/roi_pooling_op_gpu.so
 
-# Install TensorFlow
-RUN pip --no-cache-dir install \
-	https://storage.googleapis.com/tensorflow/linux/${TENSORFLOW_ARCH}/tensorflow_${TENSORFLOW_ARCH}-${TENSORFLOW_VERSION}-cp27-none-linux_x86_64.whl
+# RUN /usr/bin/python -c "import tensorflow as tf"
 
+# RUN cd /app/scene-graph-TF-release && \
+#    wget https://www.dropbox.com/s/2rgq9vcx1jpeyjp/sg_checkpoint.zip && \
+#    unzip sg_checkpoint.zip && \
+#    rm sg_checkpoint.zip
 
-# Install dependencies for Caffe
-RUN apt-get update && apt-get install -y \
-		libboost-all-dev \
-		libgflags-dev \
-		libgoogle-glog-dev \
-		libhdf5-serial-dev \
-		libleveldb-dev \
-		liblmdb-dev \
-		libopencv-dev \
-		libprotobuf-dev \
-		libsnappy-dev \
-		protobuf-compiler \
-		&& \
-	apt-get clean && \
-	apt-get autoremove && \
-	rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y python-tk
 
-# # Install Caffe
-# RUN git clone -b ${CAFFE_VERSION} --depth 1 https://github.com/BVLC/caffe.git /root/caffe && \
-# 	cd /root/caffe && \
-# 	cat python/requirements.txt | xargs -n1 pip install && \
-# 	mkdir build && cd build && \
-# 	cmake -DUSE_CUDNN=1 -DBLAS=Open .. && \
-# 	make -j"$(nproc)" all && \
-# 	make install
-
-# # Set up Caffe environment variables
-# ENV CAFFE_ROOT=/root/caffe
-# ENV PYCAFFE_ROOT=$CAFFE_ROOT/python
-# ENV PYTHONPATH=$PYCAFFE_ROOT:$PYTHONPATH \
-# 	PATH=$CAFFE_ROOT/build/tools:$PYCAFFE_ROOT:$PATH
-#
-# RUN echo "$CAFFE_ROOT/build/lib" >> /etc/ld.so.conf.d/caffe.conf && ldconfig
-
-# Install OpenCV
-RUN git clone --depth 1 https://github.com/opencv/opencv.git /root/opencv && \
-	cd /root/opencv && \
-	mkdir build && \
-	cd build && \
-	cmake -DWITH_QT=ON -DWITH_OPENGL=ON -DFORCE_VTK=ON -DWITH_TBB=ON -DWITH_GDAL=ON -DWITH_XINE=ON -DBUILD_EXAMPLES=ON .. && \
-	make -j"$(nproc)"  && \
-	make install && \
-	ldconfig && \
-	echo 'ln /dev/null /dev/raw1394' >> ~/.bashrc
-
-# Set up notebook config
-COPY jupyter_notebook_config.py /root/.jupyter/
-
-# Jupyter has issues with being run directly: https://github.com/ipython/ipython/issues/7062
-COPY run_jupyter.sh /root/
-
-# Expose Ports for TensorBoard (6006), Ipython (8888)
-EXPOSE 6006 8888
-
-WORKDIR "/root"
+WORKDIR "/app"
 CMD ["/bin/bash"]
